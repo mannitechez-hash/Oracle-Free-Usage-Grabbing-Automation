@@ -22,10 +22,10 @@ jobs:
       OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
       OCI_AD_NAME: ${{ secrets.OCI_AD_NAME }}
       OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
-      OCI_DISPLAY_NAME: ${{ secrets.OCI_DISPLAY_NAME }}
-      OCI_OCPUS: ${{ secrets.OCI_OCPUS }}
-      OCI_MEMORY_GB: ${{ secrets.OCI_MEMORY_GB }}
-      OCI_BOOT_VOLUME_GB: ${{ secrets.OCI_BOOT_VOLUME_GB }}
+      OCI_INSTANCE_NAMES: ${{ secrets.OCI_INSTANCE_NAMES }}
+      OCI_OCPUS: "2"
+      OCI_MEMORY_GB: "12"
+      OCI_BOOT_VOLUME_GB: "100"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
@@ -67,21 +67,24 @@ jobs:
       - name: Verify OCI authentication
         run: oci iam region list --query 'data[0].name' --raw-output >/dev/null
 
-      - name: Try to launch ARM instance
+      - name: Try to launch ARM instances
         id: launch
         run: bash scripts/try_launch.sh
         continue-on-error: true
 
-      - name: Notify Telegram on success
-        if: steps.launch.outputs.success == 'true' && steps.launch.outputs.already_existed != 'true'
+      - name: Notify Telegram on new instance
+        if: steps.launch.outputs.new_instance_created == 'true'
         env:
           INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
           PUBLIC_IP: ${{ steps.launch.outputs.public_ip }}
-          ALREADY_EXISTED: ${{ steps.launch.outputs.already_existed }}
+          DISPLAY_NAME: ${{ steps.launch.outputs.display_name }}
+          INSTANCES_EXISTING: ${{ steps.launch.outputs.instances_existing }}
+          INSTANCES_TARGET: ${{ steps.launch.outputs.instances_target }}
+          ALL_COMPLETE: ${{ steps.launch.outputs.all_complete }}
         run: bash scripts/notify_telegram.sh
 
-      - name: Disable workflow after success
-        if: steps.launch.outputs.success == 'true'
+      - name: Disable workflow when all instances exist
+        if: steps.launch.outputs.all_complete == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -90,10 +93,10 @@ jobs:
               repo: context.repo.repo,
               workflow_id: 'oci-arm-grab.yml',
             });
-            core.info('Workflow oci-arm-grab.yml disabled to prevent duplicate instances.');
+            core.info('All target instances exist. Workflow oci-arm-grab.yml disabled.');
 
-      - name: Fail job if launch did not succeed
-        if: steps.launch.outputs.success != 'true'
+      - name: Fail job if instances still missing
+        if: steps.launch.outputs.all_complete != 'true'
         run: |
-          echo "No capacity yet or launch failed. See logs above. Next run in ~10 minutes."
+          echo "Still waiting for capacity or a second instance. Progress: ${{ steps.launch.outputs.instances_existing }}/${{ steps.launch.outputs.instances_target }}. Next run in ~10 minutes."
           exit 1
