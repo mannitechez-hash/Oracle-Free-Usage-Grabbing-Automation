@@ -12,32 +12,36 @@ if [[ -z "${INSTANCE_ID:-}" ]]; then
 fi
 
 REGION="${OCI_CLI_REGION:-unknown}"
-DISPLAY_NAME="${OCI_DISPLAY_NAME:-unknown}"
-OCPUS="${OCI_OCPUS:-?}"
-MEMORY_GB="${OCI_MEMORY_GB:-?}"
+DISPLAY_NAME="${DISPLAY_NAME:-${OCI_DISPLAY_NAME:-unknown}}"
+OCPUS="${OCI_OCPUS:-2}"
+MEMORY_GB="${OCI_MEMORY_GB:-12}"
+BOOT_GB="${OCI_BOOT_VOLUME_GB:-100}"
 PUBLIC_IP="${PUBLIC_IP:-}"
-ALREADY_EXISTED="${ALREADY_EXISTED:-false}"
-
-if [[ "$ALREADY_EXISTED" == "true" ]]; then
-  headline="OCI ARM instance already exists"
-else
-  headline="OCI ARM instance created"
-fi
+INSTANCES_EXISTING="${INSTANCES_EXISTING:-?}"
+INSTANCES_TARGET="${INSTANCES_TARGET:-2}"
+ALL_COMPLETE="${ALL_COMPLETE:-false}"
 
 ssh_line="Public IP not ready yet. Check OCI Console → Compute → Instances."
 if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" != "null" ]]; then
   ssh_line="SSH: ssh opc@${PUBLIC_IP}"
 fi
 
-message="${headline}
+progress_line="Progress: ${INSTANCES_EXISTING}/${INSTANCES_TARGET} instances in tenancy."
+if [[ "$ALL_COMPLETE" == "true" ]]; then
+  progress_line="All ${INSTANCES_TARGET} instances are now provisioned."
+fi
+
+message="OCI ARM instance created
 
 Name: ${DISPLAY_NAME}
 Region: ${REGION}
 OCID: ${INSTANCE_ID}
-OCPUs/RAM: ${OCPUS}/${MEMORY_GB} GB
+Size: ${OCPUS} OCPU / ${MEMORY_GB} GB RAM / ${BOOT_GB} GB boot
 ${ssh_line}
 
-Disable the GitHub workflow if you have not already (auto-disable runs on success)."
+${progress_line}
+
+The workflow keeps retrying until both instances exist, then auto-disables."
 
 payload="$(jq -n \
   --arg chat_id "$TELEGRAM_CHAT_ID" \
