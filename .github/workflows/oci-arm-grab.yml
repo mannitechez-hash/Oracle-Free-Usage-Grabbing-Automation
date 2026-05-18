@@ -1,0 +1,99 @@
+name: OCI ARM Grab
+
+permissions:
+  contents: read
+  actions: write
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: oci-arm-grab
+  cancel-in-progress: false
+
+jobs:
+  try-create-arm-instance:
+    runs-on: ubuntu-latest
+    env:
+      OCI_COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
+      OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+      OCI_IMAGE_ID: ${{ secrets.OCI_IMAGE_ID }}
+      OCI_AD_NAME: ${{ secrets.OCI_AD_NAME }}
+      OCI_CLI_REGION: ${{ secrets.OCI_CLI_REGION }}
+      OCI_DISPLAY_NAME: ${{ secrets.OCI_DISPLAY_NAME }}
+      OCI_OCPUS: ${{ secrets.OCI_OCPUS }}
+      OCI_MEMORY_GB: ${{ secrets.OCI_MEMORY_GB }}
+      OCI_BOOT_VOLUME_GB: ${{ secrets.OCI_BOOT_VOLUME_GB }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache OCI CLI (pip)
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: ${{ runner.os }}-pip-oci-cli-v1
+
+      - name: Add pip user bin to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install OCI CLI
+        run: pip install --user oci-cli
+
+      - name: Configure OCI API key
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          {
+            echo '[DEFAULT]'
+            echo "user=${{ secrets.OCI_CLI_USER }}"
+            echo "tenancy=${{ secrets.OCI_CLI_TENANCY }}"
+            echo "fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}"
+            echo 'key_file=~/.oci/oci_api_key.pem'
+            echo "region=${{ secrets.OCI_CLI_REGION }}"
+          } > ~/.oci/config
+          chmod 600 ~/.oci/config
+
+      - name: Write SSH public key
+        run: |
+          printf '%s\n' "${{ secrets.SSH_PUBLIC_KEY }}" > "${RUNNER_TEMP}/oci_ssh.pub"
+          echo "SSH_PUBLIC_KEY_PATH=${RUNNER_TEMP}/oci_ssh.pub" >> "$GITHUB_ENV"
+
+      - name: Verify OCI authentication
+        run: oci iam region list --query 'data[0].name' --raw-output >/dev/null
+
+      - name: Try to launch ARM instance
+        id: launch
+        run: bash scripts/try_launch.sh
+        continue-on-error: true
+
+      - name: Notify Telegram on success
+        if: steps.launch.outputs.success == 'true' && steps.launch.outputs.already_existed != 'true'
+        env:
+          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
+          PUBLIC_IP: ${{ steps.launch.outputs.public_ip }}
+          ALREADY_EXISTED: ${{ steps.launch.outputs.already_existed }}
+        run: bash scripts/notify_telegram.sh
+
+      - name: Disable workflow after success
+        if: steps.launch.outputs.success == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.disableWorkflow({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'oci-arm-grab.yml',
+            });
+            core.info('Workflow oci-arm-grab.yml disabled to prevent duplicate instances.');
+
+      - name: Fail job if launch did not succeed
+        if: steps.launch.outputs.success != 'true'
+        run: |
+          echo "No capacity yet or launch failed. See logs above. Next run in ~10 minutes."
+          exit 1
