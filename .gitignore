@@ -1,0 +1,16 @@
+# OCI credentials and local config
+*.pem
+.env
+.env.*
+oci_config
+.oci/
+
+# Script runtime artifacts
+launch.log
+instance_info.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
